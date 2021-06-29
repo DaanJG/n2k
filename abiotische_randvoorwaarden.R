@@ -1,4 +1,4 @@
-# analyse.R: by Daan Gerla, d.gerla@overijssel.nl, daan.gerla@anteagroup.nl, daan@gerla.nl
+# abiotische_randvoorwaarden.R: by Daan Gerla, d.gerla@overijssel.nl, daan.gerla@anteagroup.nl, daan@gerla.nl
 
 library('magrittr')
 library('rgdal')
@@ -10,6 +10,7 @@ library('stringr')
 library('foreign')
 library('xlsx')
 library('readxl')
+library('tidyr')
 
 root <- getwd()
 
@@ -144,10 +145,47 @@ GVG2vochttoestand <- Vectorize(function(GVG, GLG=NA, droogteststress=NA) {
     if (droogteststress >  32) return("droog")
 })
 
-abiotische_randvoorwaarden <- read_excel(paste0(root, '/data/abiotische_randvoorwaarden.xlsx'))
+#abiotische_randvoorwaarden <- read_excel(paste0(root, '/data/abiotische_randvoorwaarden.xlsx'))
 
-bepaal_bereik <- Vectorize(function(habtype, variabele, waarde, tabel=abiotisch_randvoowaarden) {
-    #print(paste(habtype, variabele, waarde, sep=', '))
+xlsx <- paste0(root, '/data/BIJ12/HabitattypeKwaliteit.xlsx')
+sheets <- excel_sheets(xlsx)
+sheets <- sheets[grep('AR', sheets)]
+sheets <- Map(function(sheet) read_excel(xlsx, sheet), sheets)
+nams <- sub('HabitattypeAR', '', names(sheets))
+nams <- sub('Overstromingsto', 'Overstromingstolerantie', nams) # fix typo
+nams <- sub('Voedslerijkdom', 'Voedselrijkdom', nams) # fix typo
+nams <- tolower(nams)
+reshape_tbl <- function(tbl, Variabele) {
+    tbl <- gather(tbl, 'Waarde', 'Code', -(1:3))
+    tbl$Variabele <- Variabele
+    tbl
+}
+tbls <- Map(reshape_tbl, sheets, nams)
+tbl <- do.call(rbind, tbls)
+tbl$HABTYPE <- sub('_', '', tbl$HabitattypeEUCode)
+tbl$HABTYPE_NAAM <- tbl$HabitatSubTypeKorteNaam
+tbl <- tbl[order(tbl$HABTYPE),]
+tbl$Code <- sub('n.v.t$', 'n.v.t.', tbl$Code) # fix typo
+f <- function(x) {
+    if (x == '2')   return('kern')
+    if (x == '1,5') return('Kernbereik als het alleen de toplaag betreft')
+    if (x == '1')   return('aavullend')
+    if (x == '0')   return('geen')
+    return(as.character(NA))
+}
+tbl$Bereik <- Vectorize(f)(tbl$Code)
+cols <- c(
+    "HABTYPE",
+    "HABTYPE_NAAM",
+    "Variabele",
+    "Waarde",
+    "Code",
+    "Bereik")
+tbl[cols]
+
+abiotische_randvoorwaarden <- tbl
+
+bepaal_bereik <- Vectorize(function(habtype, variabele, waarde, tabel=abiotische_randvoorwaarden) {
     if (!habtype %in% tabel$HABTYPE) {
         warning('HABTYPE not in table')
         return(NA_character_)
@@ -178,7 +216,7 @@ get_habveg <- function(eiv, hab, ht=habitattypen, ...) {
         HABTYPE <- list(...)$HABTYPE
     else
         HABTYPE <- 'HABTYPE'
-    habveg$HABTYPE_NAAM <- mapply(function(h) ht$HABTYPE_NAAM[ht$HABTYPE == h], habveg[[HABTYPE]])
+    #habveg$HABTYPE_NAAM <- mapply(function(h) ht$HABTYPE_NAAM[ht$HABTYPE == h], habveg[[HABTYPE]])
     habveg$zuurgraad <- pH2zuurgraad(habveg$pH)
     habveg$vochttoestand <- GVG2vochttoestand(habveg$GVG, habveg$GLG)
     habveg$voedselrijkdom <- trofie2voedselrijkdom(habveg$Trofie)
@@ -188,22 +226,22 @@ get_habveg <- function(eiv, hab, ht=habitattypen, ...) {
 get_randvoorwaarden <- function(habveg) {
     # Randvoorwaarden en bereik per habitattype en vegetatietype:
     randvoorwaarden <- list(
-        zuurgraad     =ddply(habveg, .(N2K_GEBIED, HABTYPE, HABTYPE_NAAM, VEGTYPE_eiv, zuurgraad),      summarize, jaar=jaar, klasse=zuurgraad,      bereik=bepaal_bereik(HABTYPE, 'zuurgraad',      zuurgraad),      opp=opp),
-        vochttoestand =ddply(habveg, .(N2K_GEBIED, HABTYPE, HABTYPE_NAAM, VEGTYPE_eiv, vochttoestand),  summarize, jaar=jaar, klasse=vochttoestand,  bereik=bepaal_bereik(HABTYPE, 'vochttoestand',  vochttoestand),  opp=opp),
-        voedselrijkdom=ddply(habveg, .(N2K_GEBIED, HABTYPE, HABTYPE_NAAM, VEGTYPE_eiv, voedselrijkdom), summarize, jaar=jaar, klasse=voedselrijkdom, bereik=bepaal_bereik(HABTYPE, 'voedselrijkdom', voedselrijkdom), opp=opp))
+        zuurgraad     =ddply(habveg, .(N2K_GEBIED, HABTYPE, VEGTYPE_eiv, zuurgraad),      summarize, jaar=jaar, klasse=zuurgraad,      bereik=bepaal_bereik(HABTYPE, 'zuurgraad',      zuurgraad),      opp=opp),
+        vochttoestand =ddply(habveg, .(N2K_GEBIED, HABTYPE, VEGTYPE_eiv, vochttoestand),  summarize, jaar=jaar, klasse=vochttoestand,  bereik=bepaal_bereik(HABTYPE, 'vochttoestand',  vochttoestand),  opp=opp),
+        voedselrijkdom=ddply(habveg, .(N2K_GEBIED, HABTYPE, VEGTYPE_eiv, voedselrijkdom), summarize, jaar=jaar, klasse=voedselrijkdom, bereik=bepaal_bereik(HABTYPE, 'voedselrijkdom', voedselrijkdom), opp=opp))
     for (randvoorwaarde in c('zuurgraad', 'vochttoestand', 'voedselrijkdom')) {
         randvoorwaarden[[randvoorwaarde]]$randvoorwaarde <- randvoorwaarde
         randvoorwaarden[[randvoorwaarde]][[randvoorwaarde]] <- NULL
     }
     randvoorwaarden <- do.call(rbind, randvoorwaarden)
     rownames(randvoorwaarden) <- NULL
-    randvoorwaarden[c('N2K_GEBIED', 'jaar', 'HABTYPE', 'HABTYPE_NAAM', 'VEGTYPE_eiv', 'randvoorwaarde', 'klasse', 'bereik', 'opp')]
+    randvoorwaarden[c('N2K_GEBIED', 'jaar', 'HABTYPE', 'VEGTYPE_eiv', 'randvoorwaarde', 'klasse', 'bereik', 'opp')]
 }
 
 get_randvoorwaarden_ht <- function(randvoorwaarden) {
     # Randvoorwaarden per habitattype:
     randvoorwaarden_ht <- ddply(randvoorwaarden, 
-        .(N2K_GEBIED, HABTYPE, HABTYPE_NAAM, jaar, randvoorwaarde, bereik), summarize, opp=sum(opp))
+        .(N2K_GEBIED, HABTYPE, jaar, randvoorwaarde, bereik), summarize, opp=sum(opp))
     randvoorwaarden_ht
 }
 
@@ -228,18 +266,18 @@ summarize_bereik <- function(bereik, opp) {
 
 get_bereik <- function(randvoorwaarden_ht) {
     # Bereik per habitattype en randvoorwaarde:
-    ddply(randvoorwaarden_ht, .(N2K_GEBIED, HABTYPE, HABTYPE_NAAM, jaar, randvoorwaarde), summarize, 
+    ddply(randvoorwaarden_ht, .(N2K_GEBIED, HABTYPE, jaar, randvoorwaarde), summarize, 
           bereik=summarize_bereik(bereik, opp))
 }
 
 get_dekking <- function(hab, habveg, ...) {
     habtot <- reshape_mixed_habtyp(hab@data, ...)
-    x <- ddply(habveg, c('N2K_GEBIED', HABTYPE), summarize, opp=sum(opp))
-    y <- ddply(habtot, c('N2K_GEBIED', HABTYPE), summarize, opp=sum(OPP))
-    dekking <- merge(x, y, by=c('N2K_GEBIED', HABTYPE), all=T, suffixes=c('.dek', '.tot'))
+    x <- ddply(habveg, .(N2K_GEBIED, HABTYPE), summarize, opp=sum(opp))
+    y <- ddply(habtot, .(N2K_GEBIED, HABTYPE), summarize, opp=sum(OPP))
+    dekking <- merge(x, y, by=c('N2K_GEBIED', 'HABTYPE'), all=T, suffixes=c('.dek', '.tot'))
     dekking$opp.dek[is.na(dekking$opp.dek)] <- 0.0
     dekking$dekking <- dekking$opp.dek / dekking$opp.tot
-    dekking[c('N2K_GEBIED', HABTYPE, 'dekking')]
+    dekking[c('N2K_GEBIED', 'HABTYPE', 'dekking')]
     }
 
 #===============================================================================
@@ -278,7 +316,7 @@ rapporteer <- c(
      )
 
 #===============================================================================
-# 
+# Initialiseer
 #===============================================================================
 
 EIV <- list()
@@ -457,7 +495,7 @@ setwd(root)
 
 N2K_gebied <- 'Sallandse Heuvelrug'
 hab <- habitattypen[habitattypen$N2K_GEBIED == N2K_gebied, ]
-path <- 'data/Sallandse_Heuvelrug/Natuurmonumenten'
+path <- 'data/abiotische_randvoorwaarden_input/Sallandse_Heuvelrug/Natuurmonumenten'
 eiv <- read_layers(path)
 
 eiv$jaar <- 2015
@@ -473,51 +511,51 @@ EIV[[N2K_gebied]] <- eiv
 HAB[[N2K_gebied]] <- habveg
 BRK[[N2K_gebied]] <- bereik
 
-#===============================================================================
-# Wierdense Veld
-#===============================================================================
-
-setwd(root)
-setwd('data/Wierdense_Veld')
-
-# Turboveg: 
-opname <- list(abundance   =read.dbf('Turboveg_Wierdense_Veld_2015/tvabund.dbf'),
-               habitat_type=read.dbf('Turboveg_Wierdense_Veld_2015/tvhabita.dbf'),
-               remarks     =read.dbf('Turboveg_Wierdense_Veld_2015/remarks.dbf'),
-               admin       =read.dbf('Turboveg_Wierdense_Veld_2015/TvAdmin.dbf'))
-names(opname$habitat_type)
-(type_turboveg <- as.character(opname$habitat_type$ASSOCIA_01))
-
-# Iteratio input vegetatietabel gemaakt door Jan-Willem Wolters:
-vegtab <- read.csv('Wierdense_Veld_Iteratio2_input.csv', sep='\t', stringsAsFactors=F)
-VELDTYPE <- unlist(vegtab[1,])
-names(VELDTYPE) <- NULL
-(type_iteratio <- VELDTYPE[3:(length(VELDTYPE) - 2)])
-
-# Vlakken:
-vlakken <- readOGR('.', stringsAsFactors=F)
-head(vlakken)
-any(duplicated((vlakken$OBJECTID))) # FALSE
-(type_vlakken <- unique(vlakken$VVN1))
-# Het ziet er naar uit dat VNN1 het beste correspondeert wat er gebruikt is 
-# om de Iteratio vegetatie tabel te maken.
-v <- vlakken@data[c('OBJECTID', 'VVN1', 'VVN2', 'VVN3', 'PERC1', 'PERC2', 'PERC3')]
-v1 <- v[c('OBJECTID', 'VVN1', 'PERC1')]
-v2 <- v[c('OBJECTID', 'VVN2', 'PERC2')]
-v3 <- v[c('OBJECTID', 'VVN3', 'PERC3')]
-names(v1) <- names(v2) <-  names(v3) <- c('OBJECTID', 'Vegtype', 'Perc')
-vegtype <- rbind(v1, v2, v3)
-vegtype <- vegtype[order(vegtype$OBJECTID),]
-vegtype <- vegtype[vegtype$Perc != 0,]
-vegtype <- vegtype[!is.na(vegtype$Vegtype),]
-rownames(vegtype) <- NULL
-head(vegtype, 40)
-
-write.xlsx(vegtype, 'Vlakkenkaart_Wierdense_Veld.xlsx', row.names=F)
-
-### Run Iteratio ###
-
-#ERROR: -9999
+##===============================================================================
+## Wierdense Veld
+##===============================================================================
+#
+#setwd(root)
+#setwd('data/abiotische_randvoorwaarden_input/Wierdense_Veld')
+#
+## Turboveg: 
+#opname <- list(abundance   =read.dbf('Turboveg_Wierdense_Veld_2015/tvabund.dbf'),
+#               habitat_type=read.dbf('Turboveg_Wierdense_Veld_2015/tvhabita.dbf'),
+#               remarks     =read.dbf('Turboveg_Wierdense_Veld_2015/remarks.dbf'),
+#               admin       =read.dbf('Turboveg_Wierdense_Veld_2015/TvAdmin.dbf'))
+#names(opname$habitat_type)
+#(type_turboveg <- as.character(opname$habitat_type$ASSOCIA_01))
+#
+## Iteratio input vegetatietabel gemaakt door Jan-Willem Wolters:
+#vegtab <- read.csv('Wierdense_Veld_Iteratio2_input.csv', sep='\t', stringsAsFactors=F)
+#VELDTYPE <- unlist(vegtab[1,])
+#names(VELDTYPE) <- NULL
+#(type_iteratio <- VELDTYPE[3:(length(VELDTYPE) - 2)])
+#
+## Vlakken:
+#vlakken <- readOGR('.', stringsAsFactors=F)
+#head(vlakken)
+#any(duplicated((vlakken$OBJECTID))) # FALSE
+#(type_vlakken <- unique(vlakken$VVN1))
+## Het ziet er naar uit dat VNN1 het beste correspondeert wat er gebruikt is 
+## om de Iteratio vegetatie tabel te maken.
+#v <- vlakken@data[c('OBJECTID', 'VVN1', 'VVN2', 'VVN3', 'PERC1', 'PERC2', 'PERC3')]
+#v1 <- v[c('OBJECTID', 'VVN1', 'PERC1')]
+#v2 <- v[c('OBJECTID', 'VVN2', 'PERC2')]
+#v3 <- v[c('OBJECTID', 'VVN3', 'PERC3')]
+#names(v1) <- names(v2) <-  names(v3) <- c('OBJECTID', 'Vegtype', 'Perc')
+#vegtype <- rbind(v1, v2, v3)
+#vegtype <- vegtype[order(vegtype$OBJECTID),]
+#vegtype <- vegtype[vegtype$Perc != 0,]
+#vegtype <- vegtype[!is.na(vegtype$Vegtype),]
+#rownames(vegtype) <- NULL
+#head(vegtype, 40)
+#
+#write.xlsx(vegtype, 'Vlakkenkaart_Wierdense_Veld.xlsx', row.names=F)
+#
+#### Run Iteratio ###
+#
+##ERROR: -9999
 
 #===============================================================================
 # Springendal & Dal van de Mosbeek
@@ -532,13 +570,20 @@ write.xlsx(vegtype, 'Vlakkenkaart_Wierdense_Veld.xlsx', row.names=F)
 setwd(root)
 
 N2K_gebied <- 'Bergvennen & Brecklenkampse Veld'
-path <- 'data/Bergvennen_Brecklenkampse_Veld'
+path <- 'data/abiotische_randvoorwaarden_input/Bergvennen_Brecklenkampse_Veld'
 gdb_path <- paste0(path, '/Habitattypenkaart.gdb')
 hab <- readOGR(gdb_path)
 hab$N2K_GEBIED <- N2K_gebied
+for (n in names(hab)[grep('Htype[[:digit:]]', names(hab))]) {
+    hab[[n]][grep('^$', hab[[n]])] <- as.character(NA)
+}
+    
 eiv <- read_layers(path)
 
 eiv$jaar <- NA_integer_
+
+plot(hab)
+plot(eiv, add=T, col='red')
 
 c2 <- c('VVN', 'PERC', 'Htype', 'Kwal')
 n <- 4
@@ -562,59 +607,58 @@ HAB[[N2K_gebied]] <- habveg
 BRK[[N2K_gebied]] <- bereik
 
 #===============================================================================
-# Lonnekermeer
-#===============================================================================
-
-setwd('data/Lonnekermeer')
-# Turboveg: 
-opname <- list(abundance   =read.dbf('Lonnekermeer_2013/tvabund.dbf'),
-               habitat_type=read.dbf('Lonnekermeer_2013/tvhabita.dbf'),
-               remarks     =read.dbf('Lonnekermeer_2013/remarks.dbf'),
-               admin       =read.dbf('Lonnekermeer_2013/TvAdmin.dbf'))
-names(opname$habitat_type)
-(type_turboveg <- as.character(opname$habitat_type$VELDTYPE))
-
-jaar <- year(as.Date(opname$habitat_type$DATE, format="%Y%m%d"))
-#NOTE: verschillende jaren voor verschillende releves, slechts deel ligt in 
-# gevraagde periode.
-
-# Iteratio input vegetatietabel gemaakt door Jan-Willem Wolters:
-vegtab <- read.csv('Beerzerveld_ITERATIO_input.csv', sep='\t', stringsAsFactors=F)
-VELDTYPE <- unlist(vegtab[1,])
-names(VELDTYPE) <- NULL
-(type_iteratio <- VELDTYPE[3:(length(VELDTYPE) - 2)])
-# Deze Iteratio input file is gemaakt in Turboveg met VELDTYPE als lokaal type.
-
- Vlakken:
-vlakken <- readOGR('.', stringsAsFactors=F)
-head(vlakken)
-any(duplicated((vlakken$OBJECTID_1))) # FALSE
-(type_vlakken <- unique(vlakken$LOKTYP1))
-unique(vlakken$SBB1)
-# Het ziet er naar uit dat LOKTYP het beste correspondeert wat er gebruikt is 
-# om de Iteratio vegetatie tabel te maken.
-v <- vlakken@data[c('OBJECTID_1', 'LOKTYP1', 'LOKTYP2', 'LOKTYP3', 'PERC1', 'PERC2', 'PERC3')]
-v1 <- v[c('OBJECTID_1', 'LOKTYP1', 'PERC1')]
-v2 <- v[c('OBJECTID_1', 'LOKTYP2', 'PERC2')]
-v3 <- v[c('OBJECTID_1', 'LOKTYP3', 'PERC3')]
-names(v1) <- names(v2) <-  names(v3) <- c('OBJECTID_1', 'Vegtype', 'Perc')
-vegtype <- rbind(v1, v2, v3)
-vegtype <- vegtype[order(vegtype$OBJECTID),]
-vegtype <- vegtype[vegtype$Perc != 0,]
-vegtype <- vegtype[!is.na(vegtype$Vegtype),]
-rownames(vegtype) <- NULL
-head(vegtype, 40)
-
-write.xlsx(vegtype, 'Vegetatievlakken_Beerzerveld.xlsx', row.names=F)
-
-unique(vlakken$JAAR)
-# [1] "2017" "2015"
-### Run Iteratio ###
-setwd(root)
-
-N2K_gebied <- 'Lonnekermeer'
-hab <- habitattypen[habitattypen$N2K_GEBIED == N2K_gebied, ]
-path <- 'data/Lonnekermeer'
+## Lonnekermeer
+##===============================================================================
+#
+#setwd('data/abiotische_randvoorwaarden_input/Lonnekermeer')
+## Turboveg: 
+#opname <- list(abundance   =read.dbf('Lonnekermeer_2013/tvabund.dbf'),
+#               habitat_type=read.dbf('Lonnekermeer_2013/tvhabita.dbf'),
+#               remarks     =read.dbf('Lonnekermeer_2013/remarks.dbf'),
+#               admin       =read.dbf('Lonnekermeer_2013/TvAdmin.dbf'))
+#names(opname$habitat_type)
+#(type_turboveg <- as.character(opname$habitat_type$VELDTYPE))
+#
+#jaar <- unique(year(as.Date(opname$habitat_type$DATE, format="%Y%m%d")))
+##NOTE: verschillende jaren voor verschillende releves, slechts deel ligt in 
+## gevraagde periode.
+#
+#vegtab <- read.csv('Lonnekermeer_2013_iteratio2_input.csv', sep='\t', stringsAsFactors=F)
+#VELDTYPE <- unlist(vegtab[1,])
+#names(VELDTYPE) <- NULL
+#(type_iteratio <- VELDTYPE[3:(length(VELDTYPE) - 2)])
+## Deze Iteratio input file is gemaakt in Turboveg met VELDTYPE als lokaal type.
+#
+# Vlakken:
+#vlakken <- readOGR('.', stringsAsFactors=F)
+#head(vlakken)
+#any(duplicated((vlakken$OBJECTID_1))) # FALSE
+#(type_vlakken <- unique(vlakken$LOKTYP1))
+#unique(vlakken$SBB1)
+## Het ziet er naar uit dat LOKTYP het beste correspondeert wat er gebruikt is 
+## om de Iteratio vegetatie tabel te maken.
+#v <- vlakken@data[c('OBJECTID_1', 'LOKTYP1', 'LOKTYP2', 'LOKTYP3', 'PERC1', 'PERC2', 'PERC3')]
+#v1 <- v[c('OBJECTID_1', 'LOKTYP1', 'PERC1')]
+#v2 <- v[c('OBJECTID_1', 'LOKTYP2', 'PERC2')]
+#v3 <- v[c('OBJECTID_1', 'LOKTYP3', 'PERC3')]
+#names(v1) <- names(v2) <-  names(v3) <- c('OBJECTID_1', 'Vegtype', 'Perc')
+#vegtype <- rbind(v1, v2, v3)
+#vegtype <- vegtype[order(vegtype$OBJECTID),]
+#vegtype <- vegtype[vegtype$Perc != 0,]
+#vegtype <- vegtype[!is.na(vegtype$Vegtype),]
+#rownames(vegtype) <- NULL
+#head(vegtype, 40)
+#
+#write.xlsx(vegtype, 'Vegetatievlakken_Beerzerveld.xlsx', row.names=F)
+#
+#unique(vlakken$JAAR)
+## [1] "2017" "2015"
+#### Run Iteratio ###
+#setwd(root)
+#
+#N2K_gebied <- 'Lonnekermeer'
+#hab <- habitattypen[habitattypen$N2K_GEBIED == N2K_gebied, ]
+#path <- 'data/Lonnekermeer'
 #eiv <- read_layers(path)
 #
 #eiv$jaar <- NA_integer_
@@ -639,8 +683,11 @@ setwd(root)
 
 N2K_gebied <- "Buurserzand & Haaksbergerveen"
 hab <- habitattypen[habitattypen$N2K_GEBIED == N2K_gebied, ]
-path <- 'data/Buurserzand_Haaksbergerveen'
+path <- 'data/abiotische_randvoorwaarden_input/Buurserzand_Haaksbergerveen'
 eiv <- read_layers(path)
+
+plot(hab)
+plot(eiv, add=T, col='red')
 
 mdb <- mdb.get(paste0(path, '/0820_Haaksbergerveen.mdb'))
 jaar <- year(as.POSIXlt(mdb$PuntLocatieSoort$DATUM, 
@@ -663,7 +710,7 @@ HAB[[N2K_gebied]] <- habveg
 BRK[[N2K_gebied]] <- bereik
 
 #===============================================================================
-#
+# Samen in een data.frame en sla op in bestand
 #===============================================================================
 
 #Habtype <- do.call(rbind, HAB)
@@ -672,4 +719,8 @@ BRK[[N2K_gebied]] <- bereik
 
 Bereik <- do.call(rbind, BRK)
 rownames(Bereik) <- NULL
-write.xlsx(Bereik, 'data/output/Bereik.xlsx', row.names=F, showNA=F)
+write.xlsx(Bereik, 'data/abiotische_randvoorwaarden_output/Bereik.xlsx', row.names=F, showNA=F)
+Bereik[Bereik$HABTYPE != 'H0000', ]
+
+hbtp <- unique(Bereik$HABTYPE)
+hbtp[!hbtp %in% abiotische_randvoorwaarden$HABTYPE]

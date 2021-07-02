@@ -1,8 +1,7 @@
 # n2k.R: by Daan Gerla
 
-library('magrittr')
 library('rgdal')
-library('Hmisc')
+#library('Hmisc')
 library('lubridate')
 library('raster')
 library('plyr')
@@ -13,7 +12,17 @@ library('readxl')
 library('tidyr')
 
 #===============================================================================
-# Functies e.d.
+# Miscelaneous functions
+#===============================================================================
+
+weighted.mean.pH <- function(pH, w, na.rm=F) {
+    H <- 10^-pH
+    H.mean <- weighted.mean(H, w, na.rm=na.rm)
+    -log(H.mean, 10)
+}
+
+#===============================================================================
+# Functions for working with spatial data
 #===============================================================================
 
 get_variable   <- function(colheader) str_extract(colheader, '(\\b[:alpha:]+)')
@@ -44,12 +53,6 @@ read_layers <- function(path, vars=c('GLG', 'GVG', 'pH', 'Trofie')) {
     merge_spd(vars, spds)
 }
 
-weighted.mean.pH <- function(pH, w, na.rm=F) {
-    H <- 10^-pH
-    H.mean <- weighted.mean(H, w, na.rm=na.rm)
-    -log(H.mean, 10)
-}
-
 intersect_eiv_hab <- function(eiv, hab) {
 
     # "polygon" below refers to habitat, i.e. a continous area of the same 
@@ -64,8 +67,8 @@ intersect_eiv_hab <- function(eiv, hab) {
     
     # https://gis.stackexchange.com/a/140536/182236:
     #projection(eiv) <- projection(hab)
-    intersection <- intersect(hab, eiv)
-    intersection$opp <- area(intersection)
+    intersection <- raster::intersect(hab, eiv)
+    intersection$opp <- raster::area(intersection)
     
     intersection
 }
@@ -95,6 +98,10 @@ reshape_mixed_habtyp <- function(
     rownames(deelgebied) <- NULL
     deelgebied
 }
+
+#===============================================================================
+# Functions for applying the Habitat Richtlijn
+#===============================================================================
 
 #trofie2voedselrijkdom <- Vectorize(function(trofie) {
 #    if (is.na(trofie)) return(NA_character_)
@@ -161,9 +168,7 @@ GVG2vochttoestand <- Vectorize(function(GVG, GLG=NA, droogteststress=NA) {
     if (droogteststress >  32) return("droog")
 })
 
-#abiotische_randvoorwaarden <- read_excel(paste0(root, '/data/abiotische_randvoorwaarden.xlsx'))
-
-read_htkw <- function(xlsx=paste0('/data/BIJ12/HabitattypeKwaliteit.xlsx') {
+read_htkw <- function(xlsx) {
     sheets <- excel_sheets(xlsx)
     sheets <- sheets[grep('AR', sheets)]
     sheets <- Map(function(sheet) read_excel(xlsx, sheet), sheets)
@@ -205,7 +210,7 @@ read_htkw <- function(xlsx=paste0('/data/BIJ12/HabitattypeKwaliteit.xlsx') {
     tbl
 }
 
-abiotische_randvoorwaarden <- read_htkw()
+abiotische_randvoorwaarden <- read_htkw('data/HabitattypeKwaliteit.xlsx')
 
 bepaal_bereik <- Vectorize(function(habtype, variabele, waarde, tabel=abiotische_randvoorwaarden) {
     if (!habtype %in% tabel$HABTYPE) {
